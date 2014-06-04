@@ -2,31 +2,77 @@ local ffi = require("ffi")
 local A = require("android")
 
 ffi.cdef[[
-struct FILE *fopen(const char *, const char *);
-size_t fread(void *, size_t, size_t, struct FILE *);
-size_t fwrite(const void *, size_t, size_t, struct FILE *);
-int fclose(struct FILE *);
-int remove(const char *);
-
-int __cdecl lzma_main(int numargs, char *args[]);
+int mkdir(const char *pathname, int mode);
 ]]
 
-local function install()
-    local function check_installed_rev()
-        local git_rev = io.open(A.dir .. "/git-rev")
-        local rev = git_rev and git_rev:read() or ""
-        return rev:match(".*%-(.*)")
+local function check_installed_rev()
+    local git_rev = io.open(A.dir .. "/git-rev")
+    if git_rev then
+        local rev = git_rev:read("*a")
+        git_rev:close()
+        return rev
     end
-    -- 7z compressed package are stored in module directory in asset
-    local module = "module"
-    local package_name = "koreader%-(.*)%.7z"
+end
+
+local function make_directory(where, dir)
+    local subdir, left = dir:match("([^/]+)/(.*)")
+    if subdir then
+        local abs = where .. "/" .. subdir
+        ffi.C.mkdir(abs, 493) -- 493dec == 0755oct
+        make_directory(abs, left)
+    end
+end
+
+local function install_file(file)
+    file = file:gsub("^%./","") -- strip leading "./"
+    A.LOGI(string.format("install file <%s>", file))
+
+    local buffer_size = 4096
+    local buf = ffi.new("char[?]", buffer_size)
+
+    make_directory(A.dir, file)
+    local output = assert(io.open(A.dir .. "/" .. file, "wb"),
+                    "cannot open output file")
+
+    local asset = ffi.C.AAssetManager_open(A.app.activity.assetManager,
+                    "install/"..file, ffi.C.AASSET_MODE_STREAMING)
+    assert(asset, "cannot open asset")
+    
+    local nb_read = ffi.C.AAsset_read(asset, buf, buffer_size)
+    while nb_read > 0 do
+        output:write(ffi.string(buf, nb_read))
+        nb_read = ffi.C.AAsset_read(asset, buf, buffer_size)
+    end
+
+    ffi.C.AAsset_close(asset)
+    output:close()
+end
+
+local function install()
+    local asset_rev = A.get_asset_content("install/git-rev")
+
+    if asset_rev == check_installed_rev() then
+        A.LOGI("Skip installation for revision "..asset_rev)
+        return
+    end
+
+    local install_these_files = A.get_asset_content("install.list")
+    for file in install_these_files:gmatch("[^\n]+") do
+        install_file(file)
+    end
+end
+
+--[[
     local mgr = A.app.activity.assetManager
-    local asset_dir = ffi.C.AAssetManager_openDir(mgr, module)
-    assert(asset_dir ~= nil, "could not open module directory in assets")
+    local asset_dir = ffi.C.AAssetManager_openDir(mgr, "install")
+
+    assert(asset_dir ~= nil, "could not open install directory in assets")
+
     local filename = ffi.C.AAssetDir_getNextFileName(asset_dir)
     while filename ~= nil do
-        filename = ffi.string(filename)
-        A.LOGI(string.format("Check file in asset %s: %s", module, filename))
+        local sfilename = ffi.string(filename)
+        A.LOGI(string.format("Check file: %s", sfilename))
+        filename = ffi.C.AAssetDir_getNextFileName(asset_dir)
         local rev = filename:match(package_name)
         if rev then
             if rev == check_installed_rev() then
@@ -67,9 +113,10 @@ local function install()
                 break
             end
         end
-        filename = ffi.string(ffi.C.AAssetDir_getNextFileName(asset_dir))
     end
+    A.LOGI("done")
     ffi.C.AAssetDir_close(asset_dir)
 end
+--]]
 
 install()

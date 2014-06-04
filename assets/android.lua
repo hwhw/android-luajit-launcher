@@ -1036,34 +1036,38 @@ function android.LOGE(message)
 end
 
 --[[
-a loader function for Lua which will look for assets when loading modules
+get the content of an asset as a string
 --]]
-function android.asset_loader(modulename)
-    local errmsg = ""
-    -- Find source
-    local modulepath = string.gsub(modulename, "%.", "/")
-    local filename = string.gsub("?.lua", "%?", modulepath)
+function android.get_asset_content(filename)
     local asset = ffi.C.AAssetManager_open(
         android.app.activity.assetManager,
         filename, ffi.C.AASSET_MODE_BUFFER)
-    --android.LOGI(string.format("trying to open asset %s: %s", filename, tostring(asset)))
-    if asset ~= nil then
-        -- read asset:
-        local assetdata = ffi.C.AAsset_getBuffer(asset)
-        local assetsize = ffi.C.AAsset_getLength(asset)
-        if assetdata ~= nil then
-            -- Compile and return the module
-            local compiled = assert(loadstring(ffi.string(assetdata, assetsize), filename))
-            ffi.C.AAsset_close(asset)
-            return compiled
-        else
-            ffi.C.AAsset_close(asset)
-            errmsg = errmsg.."\n\tunaccessible file '"..filename.."' (tried with asset loader)"
-        end
-    else
-        errmsg = errmsg.."\n\tno file '"..filename.."' (checked with asset loader)"
+    assert(asset ~= nil, "cannot open asset")
+    -- read asset:
+    local assetdata = ffi.C.AAsset_getBuffer(asset)
+    if assetdata == nil then
+        ffi.C.AAsset_close(asset)
+        error("cannot read asset data")
     end
-    return errmsg
+    local assetcontent = ffi.string(assetdata, ffi.C.AAsset_getLength(asset))
+    ffi.C.AAsset_close(asset)
+    return assetcontent
+end
+
+--[[
+a loader function for Lua which will look for assets when loading modules
+--]]
+function android.asset_loader(modulename)
+    -- Find source
+    local modulepath = string.gsub(modulename, "%.", "/")
+    local filename = string.gsub("?.lua", "%?", modulepath)
+    local ok, data = pcall(android.get_asset_content, filename)
+    if ok then
+        -- Compile and return the module
+        return assert(loadstring(data))
+    else
+        return "\n\tcannot read file '"..filename.."' (checked with asset loader)"
+    end
 end
 
 --[[
@@ -1176,18 +1180,9 @@ local function run(android_app_state)
     end
 
     -- install native libraries into libs
-    local install = android.asset_loader("install")
-    if type(install) == "function" then
-        install()
-    else
-        error("error loading install.lua")
-    end
-    local launch = android.asset_loader("launcher")
-    if type(launch) == "function" then
-        return launch()
-    else
-        error("error loading launcher.lua")
-    end
+    require("install")
+
+    return require("launcher")
 end
 
 run(...)
