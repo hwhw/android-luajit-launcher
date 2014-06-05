@@ -25,16 +25,17 @@ end
 
 local function install_file(file)
     file = file:gsub("^%./","") -- strip leading "./"
-    A.LOGI(string.format("install file <%s>", file))
-    make_directory(A.dir, file)
-    local input = A.Asset.open("install/"..file)
-    local output = assert(io.open(A.dir .. "/" .. file, "w"),
-                    "cannot open output file")
-    for content in input:data() do
-        output:write(content)
+    local ok, input = pcall(A.Asset.open, "install/"..file)
+    if ok then
+        make_directory(A.dir, file)
+        local output = assert(io.open(A.dir .. "/" .. file, "w"),
+                        "cannot open output file")
+        for content in input:data() do
+            output:write(content)
+        end
+        input:close()
+        output:close()
     end
-    input:close()
-    output:close()
 end
 
 local function install()

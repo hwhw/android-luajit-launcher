@@ -963,6 +963,9 @@ int32_t AConfiguration_getKeyboard(AConfiguration* config);
 int32_t AConfiguration_getTouchscreen(AConfiguration* config);
 int32_t AConfiguration_getScreenSize(AConfiguration* config);
 void AConfiguration_getLanguage(AConfiguration* config, char* outLanguage);
+
+void *malloc(size_t size);
+void free(void *ptr);
 ]]
 
 -- JNI Interfacing
@@ -1025,14 +1028,14 @@ local android = {
 android.Asset.__index = android.Asset
 
 function android.Asset.open(filename)
-    android.LOGI(string.format("open asset %s with %s", filename, android.app.activity.assetManager))
     local a = {
         ptr = ffi.C.AAssetManager_open(
                     android.app.activity.assetManager,
                     filename, ffi.C.AASSET_MODE_STREAMING)
     }
-android.LOGI(string.format("asset %s opened", a.ptr))
-    assert(a.ptr ~= nil, "cannot open asset")
+    if a.ptr == nil then
+        error(string.format("cannot open asset %s", filename))
+    end
     setmetatable(a, android.Asset)
     return a
 end
@@ -1042,11 +1045,18 @@ function android.Asset:length()
 end
 
 function android.Asset:data()
-    return function (chunksize)
-        chunksize = chunksize or 16384
-        local chunk = ffi.new("char[?]", chunksize)
-        local len = ffi.C.AAsset_read(self.ptr, chunk, ffi.new("int", chunksize))
-        return (len > 0) and ffi.string(chunk, len) or nil
+    if not self.chunk then
+        chunksize = chunksize or 128*1024
+        self.chunk = ffi.C.malloc(chunksize)
+        assert(self.chunk ~= nil, "could not allocate memory")
+    end
+    return function ()
+        local len = ffi.C.AAsset_read(self.ptr, self.chunk, chunksize)
+        local data = nil
+        if len > 0 then
+            data = ffi.string(self.chunk, len)
+        end
+        return data
     end
 end
 
@@ -1062,9 +1072,13 @@ function android.Asset.content_of(filename)
 end
 
 function android.Asset:close()
+    if self.chunk then
+        ffi.C.free(chunk)
+        self.chunk = nil
+    end
     if self.ptr == nil then return end
-    android.LOGI("freeing asset resources")
     ffi.C.AAsset_close(self.ptr)
+--    android.LOGI("freed asset resources")
     self.ptr = nil
 end
 
