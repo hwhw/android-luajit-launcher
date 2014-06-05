@@ -27,7 +27,6 @@ local function install_file(file)
     file = file:gsub("^%./","") -- strip leading "./"
     local ok, input = pcall(A.Asset.open, "install/"..file)
     if ok then
-        make_directory(A.dir, file)
         local output = assert(io.open(A.dir .. "/" .. file, "w"),
                         "cannot open output file")
         for content in input:data() do
@@ -44,6 +43,11 @@ local function install()
     if asset_rev == check_installed_rev() then
         A.LOGI("Skip installation for revision "..asset_rev)
         return
+    end
+
+    local create_these_dirs = A.Asset.content_of("install.dirs")
+    for dir in create_these_dirs:gmatch("[^\n]+") do
+        make_directory(A.dir, dir)
     end
 
     local install_these_files = A.Asset.content_of("install.list")
