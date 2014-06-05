@@ -1017,7 +1017,62 @@ end
 local android = {
     app = nil,
     log_name = "luajit-launcher",
+    Asset = {} -- Asset Management interface
 }
+
+-- Abstraction for Asset reading
+
+android.Asset.__index = android.Asset
+
+function android.Asset.open(filename)
+    android.LOGI(string.format("open asset %s with %s", filename, android.app.activity.assetManager))
+    local a = {
+        ptr = ffi.C.AAssetManager_open(
+                    android.app.activity.assetManager,
+                    filename, ffi.C.AASSET_MODE_STREAMING)
+    }
+android.LOGI(string.format("asset %s opened", a.ptr))
+    assert(a.ptr ~= nil, "cannot open asset")
+    setmetatable(a, android.Asset)
+    return a
+end
+
+function android.Asset:length()
+    return ffi.C.AAsset_getLength(self.ptr)
+end
+
+function android.Asset:data()
+    return function (chunksize)
+        chunksize = chunksize or 16384
+        local chunk = ffi.new("char[?]", chunksize)
+        local len = ffi.C.AAsset_read(self.ptr, chunk, ffi.new("int", chunksize))
+        return (len > 0) and ffi.string(chunk, len) or nil
+    end
+end
+
+function android.Asset:content()
+    return self:data()(self:length())
+end
+
+function android.Asset.content_of(filename)
+    local a = android.Asset.open(filename)
+    local c = a:content()
+    a:close()
+    return c
+end
+
+function android.Asset:close()
+    if self.ptr == nil then return end
+    android.LOGI("freeing asset resources")
+    ffi.C.AAsset_close(self.ptr)
+    self.ptr = nil
+end
+
+function android.Asset:__gc()
+    self:close()
+end
+
+-- Logging
 
 function android.LOG(level, message)
     ffi.C.__android_log_print(level, android.log_name, "%s", message)
@@ -1036,37 +1091,18 @@ function android.LOGE(message)
 end
 
 --[[
-get the content of an asset as a string
---]]
-function android.get_asset_content(filename)
-    local asset = ffi.C.AAssetManager_open(
-        android.app.activity.assetManager,
-        filename, ffi.C.AASSET_MODE_BUFFER)
-    assert(asset ~= nil, "cannot open asset")
-    -- read asset:
-    local assetdata = ffi.C.AAsset_getBuffer(asset)
-    if assetdata == nil then
-        ffi.C.AAsset_close(asset)
-        error("cannot read asset data")
-    end
-    local assetcontent = ffi.string(assetdata, ffi.C.AAsset_getLength(asset))
-    ffi.C.AAsset_close(asset)
-    return assetcontent
-end
-
---[[
 a loader function for Lua which will look for assets when loading modules
 --]]
 function android.asset_loader(modulename)
     -- Find source
     local modulepath = string.gsub(modulename, "%.", "/")
     local filename = string.gsub("?.lua", "%?", modulepath)
-    local ok, data = pcall(android.get_asset_content, filename)
+    local ok, data = pcall(android.Asset.content_of, filename)
     if ok then
         -- Compile and return the module
         return assert(loadstring(data))
     else
-        return "\n\tcannot read file '"..filename.."' (checked with asset loader)"
+        return "\n\tcannot read file '"..filename.."' (checked with asset loader, error: "..data..")"
     end
 end
 
